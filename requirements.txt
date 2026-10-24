@@ -1,0 +1,22 @@
+# DhanAlgo: trade_count_killswitch.py + holiday_stop_trade_killswitch.py
+# Install: pip install -r requirements.txt
+
+# Dhan API client (official)
+dhanhq>=2.0.0
+
+# TOTP for login flow used by trade_count_killswitch
+pyotp>=2.8.0
+
+# Credentials and config
+PyYAML>=6.0.1
+
+# HTTP (kill switch / API calls when requests is used)
+requests>=2.28.0
+
+# Indian equity holiday calendar (XBOM) for holiday_stop integration
+exchange-calendars>=4.5.0
+pandas>=2.0.0
+
+# Optional: cleaner process discovery for holiday_stop_trade_killswitch.py
+# (Windows fallback uses PowerShell + taskkill if psutil is absent)
+psutil>=5.9.0

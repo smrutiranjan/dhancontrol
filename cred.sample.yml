@@ -1,0 +1,27 @@
+# Sample configuration. Copy to cred.yml and fill in your own values.
+# NEVER commit your real cred.yml (it holds secrets and the script rewrites `token`).
+
+clientid: "YOUR_DHAN_CLIENT_ID"
+pin: "YOUR_DHAN_PIN"
+totp_secret: "YOUR_DHAN_TOTP_SECRET"
+token: ""  # auto-generated and saved by the script; leave empty
+
+# Kill switch fires when this many orders reach TRADED status (default 16)
+max_trades: 20
+
+# Required when pnl_exit.enabled is true (both positive rupee amounts)
+max_daily_profit: 1000000
+max_daily_loss: 10000
+
+pnl_exit:
+  enabled: false
+  product_type:
+    - INTRADAY
+    - DELIVERY
+  enable_kill_switch: false
+
+holiday_check_enabled: false
+
+# true = bypass weekday/market-hours/holiday startup checks (testing only).
+# Still connects to the real broker account.
+test_mode: false
