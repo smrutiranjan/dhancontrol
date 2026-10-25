@@ -42,22 +42,12 @@ except ImportError:
 
 # Import Dhan API with proper error handling
 try:
-    from dhanhq import dhanhq, DhanLogin, DhanContext
-    import pyotp
+    from dhanhq import dhanhq, DhanContext
     DHAN_AVAILABLE = True
-    PYOTP_AVAILABLE = True
 except ImportError as e:
     print(f"Error: Dhan API not available - {e}")
     dhanhq = None
-    DhanLogin = None
     DhanContext = None
-    PYOTP_AVAILABLE = False
-    try:
-        import pyotp
-        PYOTP_AVAILABLE = True
-    except ImportError:
-        pyotp = None
-        PYOTP_AVAILABLE = False
     DHAN_AVAILABLE = False
 
 class TradeCountKillSwitch:
@@ -432,230 +422,42 @@ class TradeCountKillSwitch:
 
     def load_credentials(self) -> bool:
         """
-        Load trading credentials from cred.yml file and generate access token using PIN/TOTP.
-        Token is generated once at startup and used throughout the application.
-        
+        Load clientid and token from cred.yml (the token is generated separately by
+        generate_token.py) and initialize the Dhan API.
+
         Returns:
             bool: True if credentials loaded and API initialized successfully, False otherwise
         """
         try:
-            if not DHAN_AVAILABLE or not DhanLogin:
+            if not DHAN_AVAILABLE:
                 print("❌ Dhan API not available")
                 return False
-            
-            # Get the directory where the script/exe is located
-            if getattr(sys, 'frozen', False):
-                # Running as compiled executable
-                base_path = os.path.dirname(sys.executable)
-            else:
-                # Running as script
-                base_path = os.path.dirname(os.path.abspath(__file__))
-            
-            cred_file = os.path.join(base_path, 'cred.yml')
+
+            cred_file = os.path.join(self._base_path(), 'cred.yml')
             self.log(f"Loading credentials from {cred_file}...")
-            
+
             if not os.path.exists(cred_file):
                 print(f"❌ Credentials file not found: {cred_file}")
-                print(f"   Current working directory: {os.getcwd()}")
-                print(f"   Executable directory: {base_path}")
                 return False
-            
+
             with open(cred_file, 'r') as f:
                 credentials = yaml.load(f, Loader=yaml.FullLoader)
-                
-            # Validate required fields
+
             if not credentials:
                 print(f"❌ Empty credentials file: {cred_file}")
                 return False
-                
-            required_fields = ['clientid', 'pin', 'totp_secret']
-            missing_fields = [field for field in required_fields if field not in credentials]
-            
-            if missing_fields:
-                print(f"❌ Missing required fields in {cred_file}: {', '.join(missing_fields)}")
-                print("   Required fields: clientid, pin, totp_secret")
+
+            client_id = credentials.get('clientid')
+            access_token = credentials.get('token')
+            if not client_id or not access_token:
+                print(f"❌ cred.yml needs 'clientid' and 'token' (run generate_token.py to create the token)")
                 return False
-            
-            # Extract credentials
-            client_id = credentials['clientid']
-            pin = credentials['pin']
-            totp_secret = credentials['totp_secret']
-            
-            # First, try to use existing token if available
-            existing_token = credentials.get('token')
-            if existing_token:
-                print("🔄 Found existing token in cred.yml, testing if it's still valid...")
-                try:
-                    # Test if existing token is valid by trying to initialize Dhan
-                    if DhanContext:
-                        test_context = DhanContext(client_id, existing_token)
-                        test_dhan = dhanhq(test_context)
-                        # Try a simple API call to verify token
-                        test_response = test_dhan.get_positions()
-                        if test_response.get("status") == "success":
-                            print("✅ Existing token is still valid, using it")
-                            self.credentials = credentials
-                            self.dhan = test_dhan
-                            print("✅ Dhan API initialized with existing token")
-                            return True
-                        else:
-                            print("⚠️  Existing token appears to be expired or invalid")
-                except Exception as e:
-                    print(f"⚠️  Existing token validation failed: {e}")
-                    print("🔄 Will generate new token...")
-            
-            # Generate new access token using PIN/TOTP
-            print("🔄 Generating new access token using PIN/TOTP...")
-            
-            # Initialize DhanLogin
-            dhan_login = DhanLogin(client_id)
-            
-            # Generate TOTP code from secret
-            if not PYOTP_AVAILABLE or not pyotp:
-                print("❌ pyotp library not available. Install it with: pip install pyotp")
-                return False
-            
-            # Retry logic for TOTP (handles timing issues and rate limiting)
-            max_retries = 5
-            access_token = None
-            
-            for attempt in range(max_retries):
-                try:
-                    # Generate TOTP code from secret
-                    totp = pyotp.TOTP(totp_secret).now()
-                    if attempt == 0:
-                        print(f"🔄 Generated TOTP code: {totp}")
-                    else:
-                        # Wait longer for retries (especially for rate limiting)
-                        if attempt == 1:
-                            wait_time = 3
-                        elif attempt == 2:
-                            wait_time = 30  # Wait 30s for rate limit
-                        elif attempt == 3:
-                            wait_time = 60  # Wait 60s for rate limit
-                        else:
-                            wait_time = 120  # Wait 2 minutes for rate limit
-                        print(f"⏳ Waiting {wait_time}s before retry {attempt + 1}/{max_retries}...")
-                        time.sleep(wait_time)
-                        totp = pyotp.TOTP(totp_secret).now()  # Generate fresh TOTP after wait
-                        print(f"🔄 Retry {attempt + 1}/{max_retries}: Generated new TOTP code: {totp}")
-                    
-                    # Generate access token
-                    access_token_data = dhan_login.generate_token(pin, totp)
-                    
-                    if 'accessToken' in access_token_data:
-                        access_token = access_token_data['accessToken']
-                        print("✅ Access token generated successfully!")
-                        print(f"   Token expires at: {access_token_data.get('expiryTime', 'N/A')}")
-                        break  # Success, exit retry loop
-                    else:
-                        error_msg = access_token_data.get('message', 'Unknown error')
-                        
-                        # Handle rate limiting (2 minutes)
-                        if '2 minutes' in str(error_msg) or 'every 2 minutes' in str(error_msg).lower():
-                            if attempt < max_retries - 1:
-                                wait_time = 120  # Wait 2 minutes
-                                print(f"⚠️  Rate limit: Token can only be generated once every 2 minutes")
-                                print(f"⏳ Waiting {wait_time}s before retry...")
-                                time.sleep(wait_time)
-                                continue
-                            else:
-                                print(f"❌ Rate limit reached. Please wait 2 minutes and try again.")
-                                if existing_token:
-                                    print("💡 Tip: Using existing token from cred.yml if available")
-                                    # Fallback to existing token even if expired (might work)
-                                    try:
-                                        if DhanContext:
-                                            fallback_context = DhanContext(client_id, existing_token)
-                                            self.dhan = dhanhq(fallback_context)
-                                            self.credentials = credentials
-                                            print("⚠️  Using existing token as fallback (may need to wait 2 minutes for new token)")
-                                            return True
-                                    except:
-                                        pass
-                                return False
-                        
-                        # Handle Invalid TOTP
-                        if 'Invalid TOTP' in str(error_msg) or 'invalid' in str(error_msg).lower():
-                            if attempt < max_retries - 1:
-                                print(f"⚠️  Invalid TOTP error. Will retry with fresh TOTP code...")
-                                continue
-                            else:
-                                print(f"❌ Failed to get access token after {max_retries} attempts: {access_token_data}")
-                                return False
-                        else:
-                            print(f"❌ Failed to get access token: {access_token_data}")
-                            return False
-                            
-                except Exception as e:
-                    error_str = str(e)
-                    
-                    # Handle rate limiting in exceptions
-                    if '2 minutes' in error_str or 'every 2 minutes' in error_str.lower():
-                        if attempt < max_retries - 1:
-                            wait_time = 120
-                            print(f"⚠️  Rate limit error. Waiting {wait_time}s...")
-                            time.sleep(wait_time)
-                            continue
-                        else:
-                            print(f"❌ Rate limit reached after {max_retries} attempts")
-                            if existing_token:
-                                print("💡 Tip: Using existing token from cred.yml as fallback")
-                                try:
-                                    if DhanContext:
-                                        fallback_context = DhanContext(client_id, existing_token)
-                                        self.dhan = dhanhq(fallback_context)
-                                        self.credentials = credentials
-                                        print("⚠️  Using existing token as fallback")
-                                        return True
-                                except:
-                                    pass
-                            return False
-                    
-                    # Handle Invalid TOTP
-                    if 'Invalid TOTP' in error_str or 'invalid' in error_str.lower():
-                        if attempt < max_retries - 1:
-                            print(f"⚠️  Invalid TOTP error. Will retry with fresh TOTP code...")
-                            continue
-                        else:
-                            print(f"❌ Error generating access token after {max_retries} attempts: {e}")
-                            return False
-                    else:
-                        print(f"❌ Error generating access token: {e}")
-                        return False
-            
-            # Store token and initialize Dhan connection
-            if access_token:
-                # Store credentials with generated token
-                self.credentials = {
-                    'clientid': client_id,
-                    'pin': pin,
-                    'totp_secret': totp_secret,
-                    'token': access_token
-                }
-                
-                # Save token back to cred.yml for future use
-                try:
-                    credentials['token'] = access_token
-                    with open(cred_file, 'w') as f:
-                        yaml.dump(credentials, f, default_flow_style=False, sort_keys=False)
-                    print("💾 Token saved to cred.yml for future use")
-                except Exception as e:
-                    print(f"⚠️  Warning: Could not save token to cred.yml: {e}")
-                
-                # Initialize Dhan connection using DhanContext
-                if not DhanContext:
-                    print("❌ DhanContext not available")
-                    return False
-                
-                dhan_context = DhanContext(client_id, access_token)
-                self.dhan = dhanhq(dhan_context)
-                print("✅ Dhan API initialized")
-                return True
-            else:
-                print("❌ Failed to generate access token after all retries")
-                return False
-                
+
+            self.credentials = credentials
+            self.dhan = dhanhq(DhanContext(client_id, access_token))
+            print("✅ Dhan API initialized with token from cred.yml")
+            return True
+
         except Exception as e:
             print(f"❌ Error loading credentials: {e}")
             import traceback

@@ -5,6 +5,9 @@ clientid: "YOUR_DHAN_CLIENT_ID"
 pin: "YOUR_DHAN_PIN"
 totp_secret: "YOUR_DHAN_TOTP_SECRET"
 token: ""  # auto-generated and saved by the script; leave empty
+token_issued_at: ""  # auto-managed: IST time the token was last generated
+token_renew_before_minutes: 5
+token_renew_at: "08:30"  # daily renewal time in Asia/Kolkata; use "" to disable
 
 # Kill switch fires when this many orders reach TRADED status (default 16)
 max_trades: 20
